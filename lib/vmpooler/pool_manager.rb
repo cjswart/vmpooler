@@ -1714,6 +1714,7 @@ module Vmpooler
         end
 
         begin
+          $logger.log('d', "CJS Creating provider #{provider_name} for pool #{pool['name']}")
           $providers[provider_name] = create_provider_object($config, $logger, $metrics, @redis, provider_class, provider_name, {}) if $providers[provider_name].nil?
         rescue StandardError => e
           $logger.log('s', "Error while creating provider for pool #{pool['name']}: #{e}")
