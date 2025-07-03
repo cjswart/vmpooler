@@ -386,10 +386,9 @@ module Vmpooler
       # inviting more conflicts. We favor selecting a longer noun rather than a
       # longer adjective because longer adjectives tend to be less fun.
       @redis.with do |redis|
-        noun = @name_generator.noun(max: 10)
-        adjective = @name_generator.adjective(max: 14 - noun.length)
-        random_name = [adjective, noun].join('-')
-        hostname = $config[:config]['prefix'] + random_name
+        # Generate a randomized hostname
+        o = [('a'..'z'), ('0'..'9')].map(&:to_a).flatten
+        hostname = $config[:config]['prefix'] + o[rand(25)] + (0...14).map { o[rand(o.length)] }.join
         available = redis.hlen("vmpooler__vm__#{hostname}") == 0
 
         [hostname, available]
