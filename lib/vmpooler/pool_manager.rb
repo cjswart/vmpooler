@@ -360,9 +360,7 @@ module Vmpooler
     # Clone a VM
     def clone_vm(pool_name, provider, dns_plugin, request_id = nil, pool_alias = nil)
       Thread.new do
-        puts pool_name.inspect
-        mutex = vm_mutex(pool_name['name'])
-        puts vm_mutex.inspect
+        mutex = vm_mutex(pool_name)
         return if mutex.locked?
 
         mutex.synchronize do
