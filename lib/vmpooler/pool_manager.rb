@@ -448,6 +448,7 @@ module Vmpooler
       # extra mutex on vapp name to avoid multiple vm created concurrently in the same vapp
       # becaus evcd cannot handle concurrent vm ceations at the same time
       mutex = vm_mutex(pool_name)
+      return if mutex.locked?
       mutex.synchronize do
         ########################
         new_vmname = find_unique_hostname(pool_name)
