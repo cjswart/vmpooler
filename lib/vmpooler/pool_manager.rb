@@ -360,18 +360,25 @@ module Vmpooler
     # Clone a VM
     def clone_vm(pool_name, provider, dns_plugin, request_id = nil, pool_alias = nil)
       Thread.new do
-        begin
-          _clone_vm(pool_name, provider, dns_plugin, request_id, pool_alias)
-        rescue StandardError => e
-          if request_id
-            $logger.log('s', "[!] [#{pool_name}] failed while cloning VM for request #{request_id} with an error: #{e}")
-            @redis.with_metrics do |redis|
-              redis.zadd('vmpooler__odcreate__task', 1, "#{pool_alias}:#{pool_name}:1:#{request_id}")
+        puts pool_name.inspect
+        mutex = vm_mutex(pool_name['name'])
+        puts vm_mutex.inspect
+        return if mutex.locked?
+
+        mutex.synchronize do
+          begin
+            _clone_vm(pool_name, provider, dns_plugin, request_id, pool_alias)
+          rescue StandardError => e
+            if request_id
+              $logger.log('s', "[!] [#{pool_name}] failed while cloning VM for request #{request_id} with an error: #{e}")
+              @redis.with_metrics do |redis|
+                redis.zadd('vmpooler__odcreate__task', 1, "#{pool_alias}:#{pool_name}:1:#{request_id}")
+              end
+            else
+              $logger.log('s', "[!] [#{pool_name}] failed while cloning VM with an error: #{e}")
             end
-          else
-            $logger.log('s', "[!] [#{pool_name}] failed while cloning VM with an error: #{e}")
+            raise
           end
-          raise
         end
       end
     end
