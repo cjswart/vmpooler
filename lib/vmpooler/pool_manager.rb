@@ -360,7 +360,7 @@ module Vmpooler
     # Clone a VM
     def clone_vm(pool_name, provider, dns_plugin, request_id = nil, pool_alias = nil)
       Thread.new do
-        mutex = vm_mutex(pool_name)
+        mutex = vm_mutex('tst-cjs-vcd-provider')
         return if mutex.locked?
 
         mutex.synchronize do
