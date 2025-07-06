@@ -449,7 +449,7 @@ module Vmpooler
       # becaus evcd cannot handle concurrent vm ceations at the same time
       mutex = vm_mutex(pool_name)
       if mutex.locked?
-        $logger.log('s', "\e[31m[!] [#{pool_name}] Already a clone process active skipping clone request beacuse of vcd limitations\e[0m")
+        $logger.log('s', "\e[31m[!] [#{pool_name}] Already a clone process active skipping clone request because of vcd limitations\e[0m")
         return nil
       end
       return if mutex.locked?
