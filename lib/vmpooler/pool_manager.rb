@@ -445,58 +445,76 @@ module Vmpooler
     end
 
     def _clone_vm(pool_name, provider, dns_plugin, request_id = nil, pool_alias = nil)
-      new_vmname = find_unique_hostname(pool_name)
-      pool_domain = Vmpooler::Dns.get_domain_for_pool(config, pool_name)
-      mutex = vm_mutex(new_vmname)
+      # extra mutex on vapp name to avoid multiple vm created concurrently in the same vapp
+      # becaus evcd cannot handle concurrent vm ceations at the same time
+      mutex = vm_mutex(pool_name)
+      if mutex.locked?
+        $logger.log('s', "\e[31m[!] [#{pool_name}] Already a clone process active skipping clone request because of vcd limitations\e[0m")
+        return nil
+      end
+      return if mutex.locked?
       mutex.synchronize do
-        @redis.with_metrics do |redis|
-          redis.multi do |transaction|
-            transaction.sadd("vmpooler__pending__#{pool_name}", new_vmname)
-            transaction.hset("vmpooler__vm__#{new_vmname}", 'clone', Time.now.to_s)
-            transaction.hset("vmpooler__vm__#{new_vmname}", 'template', pool_name) # This value is used to represent the pool.
-            transaction.hset("vmpooler__vm__#{new_vmname}", 'pool', pool_name)
-            transaction.hset("vmpooler__vm__#{new_vmname}", 'domain', pool_domain)
-            transaction.hset("vmpooler__vm__#{new_vmname}", 'request_id', request_id) if request_id
-            transaction.hset("vmpooler__vm__#{new_vmname}", 'pool_alias', pool_alias) if pool_alias
-          end
-        end
-        begin
-          $logger.log('d', "[ ] [#{pool_name}] Starting to clone '#{new_vmname}'")
-          start = Time.now
-          provider.create_vm(pool_name, new_vmname)
-          finish = format('%<time>.2f', time: Time.now - start)
-          $logger.log('s', "[+] [#{pool_name}] '#{new_vmname}' cloned in #{finish} seconds")
-          $metrics.timing("clone.#{pool_name}", finish)
-          $logger.log('d', "[ ] [#{pool_name}] Obtaining IP for '#{new_vmname}'")
-          ip_start = Time.now
-          ip = provider.get_vm_ip_address(new_vmname, pool_name)
-          ip_finish = format('%<time>.2f', time: Time.now - ip_start)
-          raise StandardError, "failed to obtain IP after #{ip_finish} seconds" if ip.nil?
-          $logger.log('s', "[+] [#{pool_name}] Obtained IP for '#{new_vmname}' in #{ip_finish} seconds")
+        ########################
+        new_vmname = find_unique_hostname(pool_name)
+        pool_domain = Vmpooler::Dns.get_domain_for_pool(config, pool_name)
+        mutex = vm_mutex(new_vmname)
+        mutex.synchronize do
           @redis.with_metrics do |redis|
-            redis.pipelined do |pipeline|
-              pipeline.hset("vmpooler__clone__#{Date.today}", "#{pool_name}:#{new_vmname}", finish)
-              pipeline.hset("vmpooler__vm__#{new_vmname}", 'clone_time', finish)
-              pipeline.hset("vmpooler__vm__#{new_vmname}", 'ip', ip)
+            redis.multi do |transaction|
+              transaction.sadd("vmpooler__pending__#{pool_name}", new_vmname)
+              transaction.hset("vmpooler__vm__#{new_vmname}", 'clone', Time.now.to_s)
+              transaction.hset("vmpooler__vm__#{new_vmname}", 'template', pool_name) # This value is used to represent the pool.
+              transaction.hset("vmpooler__vm__#{new_vmname}", 'pool', pool_name)
+              transaction.hset("vmpooler__vm__#{new_vmname}", 'domain', pool_domain)
+              transaction.hset("vmpooler__vm__#{new_vmname}", 'request_id', request_id) if request_id
+              transaction.hset("vmpooler__vm__#{new_vmname}", 'pool_alias', pool_alias) if pool_alias
             end
           end
-          dns_plugin_class_name = get_dns_plugin_class_name_for_pool(pool_name)
-          dns_plugin.create_or_replace_record(new_vmname) unless dns_plugin_class_name == 'dynamic-dns'
-        rescue StandardError
-          @redis.with_metrics do |redis|
-            redis.pipelined do |pipeline|
-              pipeline.srem("vmpooler__pending__#{pool_name}", new_vmname)
-              expiration_ttl = $config[:redis]['data_ttl'].to_i * 60 * 60
-              pipeline.expire("vmpooler__vm__#{new_vmname}", expiration_ttl)
+
+          begin
+            $logger.log('d', "[ ] [#{pool_name}] Starting to clone '#{new_vmname}'")
+            start = Time.now
+            provider.create_vm(pool_name, new_vmname)
+            finish = format('%<time>.2f', time: Time.now - start)
+            $logger.log('s', "[+] [#{pool_name}] '#{new_vmname}' cloned in #{finish} seconds")
+            $metrics.timing("clone.#{pool_name}", finish)
+
+            $logger.log('d', "[ ] [#{pool_name}] Obtaining IP for '#{new_vmname}'")
+            ip_start = Time.now
+            ip = provider.get_vm_ip_address(new_vmname, pool_name)
+            ip_finish = format('%<time>.2f', time: Time.now - ip_start)
+
+            raise StandardError, "failed to obtain IP after #{ip_finish} seconds" if ip.nil?
+
+            $logger.log('s', "[+] [#{pool_name}] Obtained IP for '#{new_vmname}' in #{ip_finish} seconds")
+
+            @redis.with_metrics do |redis|
+              redis.pipelined do |pipeline|
+                pipeline.hset("vmpooler__clone__#{Date.today}", "#{pool_name}:#{new_vmname}", finish)
+                pipeline.hset("vmpooler__vm__#{new_vmname}", 'clone_time', finish)
+                pipeline.hset("vmpooler__vm__#{new_vmname}", 'ip', ip)
+              end
+            end
+
+            dns_plugin_class_name = get_dns_plugin_class_name_for_pool(pool_name)
+            dns_plugin.create_or_replace_record(new_vmname) unless dns_plugin_class_name == 'dynamic-dns'
+          rescue StandardError
+            @redis.with_metrics do |redis|
+              redis.pipelined do |pipeline|
+                pipeline.srem("vmpooler__pending__#{pool_name}", new_vmname)
+                expiration_ttl = $config[:redis]['data_ttl'].to_i * 60 * 60
+                pipeline.expire("vmpooler__vm__#{new_vmname}", expiration_ttl)
+              end
+            end
+            raise
+          ensure
+            @redis.with_metrics do |redis|
+              redis.decr('vmpooler__tasks__ondemandclone') if request_id
+              redis.decr('vmpooler__tasks__clone') unless request_id
             end
           end
-          raise
-        ensure
-          @redis.with_metrics do |redis|
-            redis.decr('vmpooler__tasks__ondemandclone') if request_id
-            redis.decr('vmpooler__tasks__clone') unless request_id
-          end
         end
+        ########################
       end
     end
 
