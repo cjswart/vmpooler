@@ -361,18 +361,12 @@ module Vmpooler
     def clone_vm(pool_name, provider, dns_plugin, request_id = nil, pool_alias = nil)
       Thread.new do
         begin
+          puts "\e[33m[POOLMGR CLONE] starting thread #{Thread.current.object_id} for pool #{pool_name}\e[0m"
           _clone_vm(pool_name, provider, dns_plugin, request_id, pool_alias)
         rescue StandardError => e
           if request_id
             $logger.log('s', "[!] [#{pool_name}] failed while cloning VM for request #{request_id} with an error: #{e}")
-            @redis.with_metrics do |redis|
-              redis.zadd('vmpooler__odcreate__task', 1, "#{pool_alias}:#{pool_name}:1:#{request_id}")
-            end
-          else
-            $logger.log('s', "[!] [#{pool_name}] failed while cloning VM with an error: #{e}")
-          end
-          raise
-        end
+            @redis.with_metrics do |
       end
     end
 
@@ -447,6 +441,7 @@ module Vmpooler
     def _clone_vm(pool_name, provider, dns_plugin, request_id = nil, pool_alias = nil)
       # extra mutex on vapp name to avoid multiple vm created concurrently in the same vapp
       # becaus evcd cannot handle concurrent vm ceations at the same time
+      puts "\e[33m[POOLMGR CLONE] [#{pool_name}] [Thread: #{Thread.current.object_id}] Cloning VM\e[0m"
       mutex = vm_mutex(pool_name)
       if mutex.locked?
         $logger.log('s', "\e[31m[!] [#{pool_name}] Already a clone process active skipping clone request because of vcd limitations\e[0m")
