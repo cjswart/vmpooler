@@ -366,7 +366,14 @@ module Vmpooler
         rescue StandardError => e
           if request_id
             $logger.log('s', "[!] [#{pool_name}] failed while cloning VM for request #{request_id} with an error: #{e}")
-            @redis.with_metrics do |
+            @redis.with_metrics do |redis|
+              redis.zadd('vmpooler__odcreate__task', 1, "#{pool_alias}:#{pool_name}:1:#{request_id}")
+            end
+          else
+            $logger.log('s', "[!] [#{pool_name}] failed while cloning VM with an error: #{e}")
+          end
+          raise
+        end
       end
     end
 
